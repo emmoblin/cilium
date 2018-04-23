@@ -26,6 +26,7 @@ import (
 	"github.com/containernetworking/cni/plugins/ipam/host-local/backend/allocator"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
+	k8sAllocator "k8s.io/kubernetes/pkg/registry/core/service/allocator"
 	"k8s.io/kubernetes/pkg/registry/core/service/ipallocator"
 )
 
@@ -92,6 +93,14 @@ func ReserveLocalRoutes() {
 	reserveLocalRoutes(ipamConf)
 }
 
+// newCIDRRange is a helper that wraps NewAllocatorCIDRRange with contiguous
+// allocation map.
+func newCIDRRange(cidr *net.IPNet) *ipallocator.Range {
+	return ipallocator.NewAllocatorCIDRRange(cidr, func(max int, rangeSpec string) k8sAllocator.Interface {
+		return k8sAllocator.NewContiguousAllocationMap(max, rangeSpec)
+	})
+}
+
 // Init initializes the IPAM package
 func Init() error {
 	ipamSubnets := net.IPNet{
@@ -115,13 +124,14 @@ func Init() error {
 				},
 			},
 		},
-		IPv6Allocator: ipallocator.NewCIDRRange(node.GetIPv6AllocRange()),
+
+		IPv6Allocator: newCIDRRange(node.GetIPv6AllocRange()),
 	}
 
 	// Since docker doesn't support IPv6 only and there's always an IPv4
 	// address we can set up ipam for IPv4. More info:
 	// https://github.com/docker/libnetwork/pull/826
-	ipamConf.IPv4Allocator = ipallocator.NewCIDRRange(node.GetIPv4AllocRange())
+	ipamConf.IPv4Allocator = newCIDRRange(node.GetIPv4AllocRange())
 	ipamConf.IPAMConfig.Routes = append(ipamConf.IPAMConfig.Routes,
 		// IPv4
 		cniTypes.Route{
